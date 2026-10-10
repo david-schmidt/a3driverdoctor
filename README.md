@@ -2,9 +2,9 @@
 
 **a3driverdoctor** is a Swiss Army Knife for working with Apple /// device drivers.  It lets you add, subtract, inspect, identify, display, and extract device drivers to and from disk images. It can manipulate assembled relocatable object files as drivers, locate a relocatable driver to aid in disassembly, and convert ca65-produced o65 file format to SOS relocatable format.  It does all this with disk images directly, so you don't need to do any other filesystem extraction or insertion of disk images manually using other tools.
 
-Its central working format is the **SOS relocatable driver**: one driver record containing its comment, code, and relocation data. A driver may support multiple devices through linked Device Information Blocks (DIBs). A driver may exist inside a floppy's SOS.DRIVER bundle, or on a floppy filesystem as a standalone file, or on your local filesystem after assembly, among other places.  The idea is to move, convert, or inspect any driver in any format existing any place.  The more modern o65 relocatable file format used by the ca65 assembler as pioneered by [https://github.com/robjustice/a3driverutil](Rob Justice) is gratefully acknowledged.
+Its central working format is the **SOS relocatable driver**: one driver record containing its comment, code, and relocation data. A driver may support multiple devices through linked Device Information Blocks (DIBs). A driver may exist inside a floppy's SOS.DRIVER bundle, or on a floppy filesystem as a standalone file, or on your local filesystem after assembly, among other places.  The idea is to move, convert, or inspect any driver in any format existing any place.  The more modern o65 relocatable file format used by the ca65 assembler as pioneered by [Rob Justice](https://github.com/robjustice/a3driverutil) is gratefully acknowledged.
 
-`a3dmd.py` is a standalone Python 3 script, and when installed in a Python environment via [https://pypi.org/project/a3driverdoctor/](PyPI) it is invoked simply as `a3dmd`.
+`a3dmd.py` is a standalone Python 3 script, and when installed in a Python environment via [PyPI](https://pypi.org/project/a3driverdoctor/) it is invoked simply as `a3dmd`.
 
 ## Requirements
 
