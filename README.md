@@ -60,7 +60,7 @@ For `add`, `extract`, and `hash`, choose **exactly one** of these sources:
 | `--outputimage PATH` | `add` | Existing destination image to update in place; required. |
 | `--outputfile PATH` | `add` | Destination bundle pathname **inside the image**; defaults to `SOS.DRIVER`. The bundle must already exist. |
 | `--outputfile PATH` | `extract`, `convert` | **Local filesystem** output filename; required. Writes SOS relocatable format. |
-| `--relocate1 | `extract` | Reconstruct `$FFFF` + one-byte comment length + comment before CODE fixed at `$2000`; print the calculated binary load address. |
+| `--relocate` | `extract` | Reconstruct `$FFFF` + one-byte comment length + comment before CODE fixed at `$2000`; print the calculated binary load address. |
 | `--hash-mode MODE` | All | `immutable` (default) or `driv3rs` algorithm; displays the calculated hash with given algorithm. |
 | `--dry-run` | `add`, `delete` | Perform and verify the update on a temporary image, without committing or creating a backup. Requires writable image permissions and space for the temporary copy. |
 | `--no-backup` | `add`, `delete` | Disable automatic image backup. |
