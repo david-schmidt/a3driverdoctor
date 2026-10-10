@@ -1,6 +1,6 @@
 # a3driverdoctor (`a3dmd.py`)
 
-**a3driverdoctor** is a Swiss Army Knife for working with Apple /// device drivers.  It lets you add, subtract, inspect, identify, display, and extract device drivers to and from disk images. It can manipulate assembled relocatable object files as drivers, locate a relocatable driver to aid in disassembly, and convert ca65-produced o65 file format to SOS relocatable format.  It does all this with disk images directly, so you don't need to do any other filesystem extraction or insertion of disk images manually using other tools.
+**a3driverdoctor** is a Swiss Army Knife for working with Apple /// SOS device drivers.  It lets you add, subtract, inspect, identify, display, and extract device drivers to and from disk images. It can manipulate assembled relocatable object files as drivers, locate a relocatable driver to aid in disassembly, and convert ca65-produced o65 file format to SOS relocatable format.  It does all this with disk images directly, so you don't need to do any other filesystem extraction or insertion of disk images manually using other tools.
 
 Its central working format is the **SOS relocatable driver**: one driver record containing its comment, code, and relocation data. A driver may support multiple devices through linked Device Information Blocks (DIBs). A driver may exist inside a floppy's SOS.DRIVER bundle, or on a floppy filesystem as a standalone file, or on your local filesystem after assembly, among other places.  The idea is to move, convert, or inspect any driver in any format existing any place.  The more modern o65 relocatable file format used by the ca65 assembler as pioneered by [Rob Justice](https://github.com/robjustice/a3driverutil) is gratefully acknowledged.
 
@@ -60,7 +60,7 @@ For `add`, `extract`, and `hash`, choose **exactly one** of these sources:
 | `--outputimage PATH` | `add` | Existing destination image to update in place; required. |
 | `--outputfile PATH` | `add` | Destination bundle pathname **inside the image**; defaults to `SOS.DRIVER`. The bundle must already exist. |
 | `--outputfile PATH` | `extract`, `convert` | **Local filesystem** output filename; required. Writes SOS relocatable format. |
-| `--relocate | `extract` | Reconstruct $FFFF + one-byte comment length + comment before CODE fixed at $2000; print the calculated binary load address. |
+| `--relocate1 | `extract` | Reconstruct `$FFFF` + one-byte comment length + comment before CODE fixed at `$2000`; print the calculated binary load address. |
 | `--hash-mode MODE` | All | `immutable` (default) or `driv3rs` algorithm; displays the calculated hash with given algorithm. |
 | `--dry-run` | `add`, `delete` | Perform and verify the update on a temporary image, without committing or creating a backup. Requires writable image permissions and space for the temporary copy. |
 | `--no-backup` | `add`, `delete` | Disable automatic image backup. |

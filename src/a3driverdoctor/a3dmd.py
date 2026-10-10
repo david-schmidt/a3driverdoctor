@@ -37,7 +37,7 @@ import struct
 import sys
 import tempfile
 
-VERSION = '0.0.1'
+VERSION = '0.2.0'
 SIGNATURE = b'SOS DRVR'
 RELOCATED_CODE_BASE = 0x2000
 TEXT_COMMENT_MARKER = bytes.fromhex('FF FF')
