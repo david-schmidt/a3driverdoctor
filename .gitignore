@@ -1,3 +1,8 @@
 build/
 dist/
 a3driverdoctor.egg-info/
+# Ignore all python cache directories and files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
