@@ -3,10 +3,10 @@ from pathlib import Path
 import sys
 import unittest
 
-ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / 'src'))
+ROOT = Path(__file__).resolve().parent
+sys.path.insert(0, str(ROOT))
 
-from a3driverdoctor.a3dmd import *  # Test the module's format helpers.
+from a3dmd import *  # Test the module's format helpers.
 
 """No image library, assembler or network required for these tests."""
 def fixture(name='.TEST', secondary=False):
@@ -24,8 +24,9 @@ def fixture(name='.TEST', secondary=False):
         dib(128, '.SECOND')
     return Driver(b'test comment', bytes(code), le16(2))
 
-def o65(driver, relocation=b'\x03\x83\x00'):
-    text = b'\xff\xff' + le16(len(driver.comment)) + driver.comment
+def o65(driver, relocation=b'\x03\x83\x00', text_marker=True):
+    text = ((b'\xff\xff' if text_marker else b'')
+            + le16(len(driver.comment)) + driver.comment)
     header = b'\x01\x00o65\x00' + le16(0)
     header += struct.pack('<9H', 0, len(text), 0, len(driver.code), 0, 0, 0, 0, 0)
     # One binary option including a non-ASCII byte, then option terminator.
@@ -179,11 +180,12 @@ class Tests(unittest.TestCase):
                 d = Driver(b'x' * length, original.code, original.relocation)
                 packed = d.pack()
                 result = relocated_record(d)
-                start = 3 + length
+                preamble = (b'' if length == 0 else
+                            b'\xff\xff' + bytes([length]) + d.comment)
+                start = len(preamble)
                 expected_code = bytearray(d.code)
                 expected_code[2:4] = le16(0x2030)
-                self.assertEqual(result, b'\xff\xff' + bytes([length])
-                                 + d.comment + bytes(expected_code))
+                self.assertEqual(result, preamble + bytes(expected_code))
                 self.assertEqual(len(result), start + len(d.code))
                 self.assertEqual(word(result, start + 2), 0x2030)
                 self.assertEqual(d.pack(), packed)
@@ -197,7 +199,17 @@ class Tests(unittest.TestCase):
 
     def test_relocated_text_marker_layout(self):
         original = fixture()
-        for length, load in ((0, 0x1FFD), (48, 0x1FCD), (50, 0x1FCB),
+        # An explicit empty o65 TEXT preamble remains $FFFF $00.
+        d = Driver(b'', original.code, original.relocation)
+        result = relocated_record(convert_o65(o65(d)))
+        self.assertEqual(result[:3], b'\xff\xff\x00')
+        self.assertEqual(RELOCATED_CODE_BASE - 3, 0x1FFD)
+        self.assertEqual(word(result, 5), 0x2030)
+        # Without the optional marker, CODE begins immediately at $2000.
+        result = relocated_record(convert_o65(o65(d, text_marker=False)))
+        self.assertFalse(result.startswith(b'\xff\xff'))
+        self.assertEqual(word(result, 2), 0x2030)
+        for length, load in ((48, 0x1FCD), (50, 0x1FCB),
                              (51, 0x1FCA), (255, 0x1EFE)):
             d = Driver(b'x' * length, original.code, original.relocation)
             result = relocated_record(convert_o65(o65(d)))
@@ -249,7 +261,7 @@ class Tests(unittest.TestCase):
         code = d.code + bytes(code_length - len(d.code))
         for comment in (b'', b'x' * 255):
             edge = Driver(comment, code, d.relocation)
-            load = base - 3 - len(comment)
+            load = base - len(relocated_preamble(edge))
             self.assertEqual(len(relocated_record(edge)) + load, 0x10000)
             with self.assertRaisesRegex(DoctorError, 'extend beyond'):
                 relocated_record(Driver(comment, code + b'\0', b''))

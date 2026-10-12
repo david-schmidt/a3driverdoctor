@@ -28,7 +28,7 @@ from __future__ import annotations
 
 import argparse
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import hashlib
 import os
 from pathlib import Path
@@ -100,6 +100,10 @@ class Driver:
     comment: bytes
     code: bytes
     relocation: bytes
+    # o65 TEXT can explicitly include or omit the optional $FFFF comment
+    # preamble.  SOS driver records do not retain that distinction, so None
+    # denotes a record read from the SOS container format.
+    text_preamble: bool | None = field(default=None, compare=False)
 
     @classmethod
     def read(cls, reader):
@@ -297,7 +301,8 @@ def convert_o65(data):
         reader.take(size - 1)  # Includes the option type, which may be binary.
     text = reader.take(tlen)
     code = reader.take(dlen)
-    if text.startswith(b'\xff\xff'):
+    text_preamble = text.startswith(TEXT_COMMENT_MARKER)
+    if text_preamble:
         text = text[2:]
     require(len(text) >= 2 and word(text, 0) == len(text) - 2,
             'TEXT must be [$FFFF,] comment length, and exactly that many comment bytes')
@@ -328,17 +333,25 @@ def convert_o65(data):
         require(segment in (1, 2, 3, 4, 5), 'Invalid o65 exported symbol segment')
         reader.u16()
     require(reader.pos == len(data), 'Unexpected trailing/chained data in o65 file')
-    driver = Driver(text[2:], code, b''.join(le16(p) for p in offsets))
+    driver = Driver(text[2:], code, b''.join(le16(p) for p in offsets),
+                    text_preamble=text_preamble)
     driver.validate()
     return driver
 
 
 def relocated_preamble(driver):
-    """Reconstruct the guide's optional comment field; always emit its marker.
+    """Reconstruct the optional TEXT comment field before relocated CODE.
 
-    Container LE16 lengths are not part of this in-memory/disassembly layout.
-    Even an empty comment emits FF FF 00, keeping export behavior explicit.
+    For an o65 source, ``Driver.text_preamble`` records whether the optional
+    $FFFF marker was present, including an explicit empty ($FFFF $00) TEXT
+    comment.  The SOS driver container does not store that distinction; for
+    such records, preserve the established reconstruction rule: emit a
+    preamble only for a nonempty comment.
     """
+    if driver.text_preamble is False:
+        return b''
+    if driver.text_preamble is None and not driver.comment:
+        return b''
     require(len(driver.comment) <= 255,
             'Relocated TEXT comment exceeds the SOS guide limit of 255 bytes')
     return TEXT_COMMENT_MARKER + bytes((len(driver.comment),)) + driver.comment
@@ -658,8 +671,9 @@ def argument_parser():
     option(p, 'outputfile', required=True, help='LOCAL output filename')
     p.add_argument('--force', action='store_true', help='Overwrite an existing local output file')
     p.add_argument('--relocate', action='store_true',
-                   help='Reconstruct $FFFF + one-byte comment length + comment before CODE '
-                        'fixed at $2000; print the calculated binary load address. '
+                   help='Reconstruct an o65 TEXT $FFFF comment preamble when present; for SOS '
+                        'container sources, emit one only for a nonempty comment. CODE is '
+                        'fixed at $2000. Print the calculated binary load address. '
                         'Omit container length words and relocation table '
                         '(disassembly only, not installation)')
 
