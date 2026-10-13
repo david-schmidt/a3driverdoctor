@@ -290,7 +290,7 @@ def convert_o65(data):
             f'Unsupported o65 mode ${mode:04X}; require 6502, 16-bit, byte-aligned, unchained')
     tbase, tlen, dbase, dlen, bbase, blen, zbase, zlen, stack = (
         reader.u16() for _ in range(9))
-    require(tlen >= 2 and dlen > 0, 'o65 must have TEXT comment and DATA driver segments')
+    require(dlen > 0, 'o65 must have a DATA driver segment')
     require(dbase == 0, 'o65 DATA must be linked at $0000 (use Apple3_o65.cfg)')
     require(blen == 0 and zlen == 0, 'o65 BSS/ZP allocation cannot be represented in a SOS driver')
     while True:
@@ -301,11 +301,30 @@ def convert_o65(data):
         reader.take(size - 1)  # Includes the option type, which may be binary.
     text = reader.take(tlen)
     code = reader.take(dlen)
+    # TEXT is absent or a literal SOS comment preamble. Prefer the standard
+    # $FFFF + uint8 length + payload layout. Historical drivers also use a
+    # little-endian length word with a zero high byte; accept that only when
+    # the whole TEXT length matches. Never strip a genuine leading NUL from
+    # a standard comment. Normalize legacy input to the same comment bytes;
+    # relocated exports reconstruct the standard one-byte-length preamble.
+    # The SOS container's independent 16-bit length format is unchanged.
     text_preamble = text.startswith(TEXT_COMMENT_MARKER)
-    if text_preamble:
-        text = text[2:]
-    require(len(text) >= 2 and word(text, 0) == len(text) - 2,
-            'TEXT must be [$FFFF,] comment length, and exactly that many comment bytes')
+    if text:
+        require(text_preamble,
+                'Nonempty o65 TEXT must begin with the $FFFF comment marker')
+        require(len(text) >= 3,
+                'Truncated o65 TEXT comment: missing one-byte length after $FFFF')
+        length = text[2]
+        if len(text) == 3 + length:
+            comment = text[3:]
+        else:
+            require(len(text) == 4 + length and text[3] == 0,
+                    'o65 TEXT must contain $FFFF, a one-byte comment length '
+                    '(or a legacy two-byte length with zero high byte), '
+                    'and exactly that many comment bytes')
+            comment = text[4:]
+    else:
+        comment = b''
     require(reader.u16() == 0, 'Unresolved o65 imports are not supported')
     require(reader.byte() == 0, 'TEXT relocation is not supported (comments must be literal)')
     offsets, pos, extended = [], -1, False
@@ -333,7 +352,7 @@ def convert_o65(data):
         require(segment in (1, 2, 3, 4, 5), 'Invalid o65 exported symbol segment')
         reader.u16()
     require(reader.pos == len(data), 'Unexpected trailing/chained data in o65 file')
-    driver = Driver(text[2:], code, b''.join(le16(p) for p in offsets),
+    driver = Driver(comment, code, b''.join(le16(p) for p in offsets),
                     text_preamble=text_preamble)
     driver.validate()
     return driver
@@ -550,9 +569,11 @@ def replace_image_file(path, filename, expected, replacement, backup=True, dry_r
         saved = unique_backup(path, original) if backup else None
         require(path.read_bytes() == original,
                 'Original image changed concurrently; refusing to commit')
-        os.chmod(temporary, mode)
-        with temporary.open('rb') as stream:
+        # fsync requires a writable descriptor on platforms such as macOS.
+        # Sync before restoring permissions, which may remove our write access.
+        with temporary.open('r+b') as stream:
             os.fsync(stream.fileno())
+        os.chmod(temporary, mode)
         os.replace(temporary, path)
         return saved
     finally:
