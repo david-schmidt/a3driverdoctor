@@ -16,6 +16,8 @@ Examples:
     python a3dmd.py convert --o65file mydriver.o65 --outputfile mydriver.DRVR
     python a3dmd.py hash --relocfile mydriver.DRVR
     python a3dmd.py list --inputimage test.dsk
+    python a3dmd.py setslot --bundlefile SOS.DRIVER --driver .MOUSE --slot 2
+    python a3dmd.py setslot --inputimage test.dsk --driver .MOUSE --slot 2
 
 Format/algorithm references:
   Robert Justice's a3driverutil: https://github.com/robjustice/a3driverutil
@@ -36,11 +38,19 @@ import stat
 import struct
 import sys
 import tempfile
+from importlib.metadata import PackageNotFoundError, version
 
-VERSION = '0.2.0'
+try:
+    __version__ = version("a3driverdoctor")
+except PackageNotFoundError:
+    __version__ = "unknown (not installed)"
+
+VERSION = '0.2.1'
 SIGNATURE = b'SOS DRVR'
 RELOCATED_CODE_BASE = 0x2000
 TEXT_COMMENT_MARKER = bytes.fromhex('FF FF')
+VALID_SLOTS = (0, 1, 2, 3, 4, 255)
+DIB_SLOT_OFFSET = 0x15  # Relative to the DIB, excluding the code-length word.
 SUPPORTED_EXTENSIONS = {'.dsk', '.do', '.po', '.hdv'}
 
 
@@ -206,6 +216,19 @@ class Driver:
         self.validate()
         return (le16(len(self.comment)) + self.comment + le16(len(self.code))
                 + self.code + le16(len(self.relocation)) + self.relocation)
+
+    def setslot(self, slot):
+        """Return a copy with every DIB's slot updated, like a3driverutil."""
+        require(type(slot) is int and slot in VALID_SLOTS,
+                'Invalid slot number; expected 0, 1-4, or 255')
+        self.validate()
+        code = bytearray(self.code)
+        for dib in self.dibs():
+            code[dib.offset + DIB_SLOT_OFFSET] = slot
+        result = Driver(self.comment, bytes(code), self.relocation,
+                        text_preamble=self.text_preamble)
+        result.validate()
+        return result
 
     def digest(self, mode='immutable'):
         dibs = self.dibs()
@@ -580,6 +603,40 @@ def replace_image_file(path, filename, expected, replacement, backup=True, dry_r
         temporary.unlink(missing_ok=True)
 
 
+def replace_bundle_file(path, expected, replacement, backup=True, dry_run=False):
+    """Validate and atomically replace a local bundle, retaining permissions."""
+    path = Path(path).expanduser()
+    require(not path.is_symlink(), 'Refusing to overwrite a symlink')
+    path = path.resolve(strict=True)
+    mode = stat.S_IMODE(path.stat().st_mode)
+    require(mode & 0o222, f'Bundle is read-only: {path}')
+    require(path.read_bytes() == expected,
+            'Destination bundle changed while preparing the operation')
+    require(Bundle.parse(replacement).pack() == replacement,
+            'Replacement bundle failed validation')
+    if dry_run or expected == replacement:
+        return None
+    fd, name = tempfile.mkstemp(prefix='.' + path.name + '.a3dmd-', dir=path.parent)
+    temporary = Path(name)
+    try:
+        with os.fdopen(fd, 'wb') as stream:
+            stream.write(replacement)
+            stream.flush()
+            os.fsync(stream.fileno())
+        require(temporary.read_bytes() == replacement,
+                'Read-back verification of bundle failed')
+        require(path.read_bytes() == expected,
+                'Original bundle changed concurrently; refusing to commit')
+        saved = unique_backup(path, expected) if backup else None
+        require(path.read_bytes() == expected,
+                'Original bundle changed concurrently; refusing to commit')
+        os.chmod(temporary, mode)
+        os.replace(temporary, path)
+        return saved
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
 def write_local(path, data, force=False):
     path = Path(path).expanduser()
     if not force:
@@ -649,7 +706,7 @@ def argument_parser():
     parser = DoubleDashParser(prog='a3dmd', description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter,
                                      allow_abbrev=False)
-    parser.add_argument('--version', action='version', version=VERSION)
+    parser.add_argument('--version', action='version', version=f"%(prog)s {__version__}")
     sub = parser.add_subparsers(dest='command', required=True)
 
     def option(p, name, **kwargs):
@@ -686,6 +743,22 @@ def argument_parser():
     option(p, 'driver', required=True)
     hashing(p)
     safety(p)
+
+    p = sub.add_parser('setslot', help='Set the slot in all DIBs of a driver in place',
+                       allow_abbrev=False)
+    group = p.add_mutually_exclusive_group(required=True)
+    option(group, 'bundlefile', help='Local SOS.DRIVER bundle to update in place')
+    option(group, 'inputimage', help='Disk image to update in place')
+    option(p, 'inputfile', help='Bundle path within image (default SOS.DRIVER)')
+    option(p, 'driver', required=True,
+           help='Primary or secondary device name (updates the entire driver record)')
+    option(p, 'slot', required=True, type=int, choices=VALID_SLOTS,
+           help='Slot value: 0, 1-4, or 255 (decimal)')
+    hashing(p)
+    p.add_argument('--dry-run', action='store_true',
+                   help='Validate the bundle/image update without committing')
+    p.add_argument('--no-backup', action='store_true',
+                   help='Do not create a backup of the bundle or image')
 
     p = sub.add_parser('extract', help='Save a driver; optionally relocate for disassembly', allow_abbrev=False)
     source(p)
@@ -730,6 +803,37 @@ def run(args):
                   f'{len(driver.code):6} {len(driver.relocation):6}  '
                   f'{driver.digest(args.hash_mode)}  {", ".join(driver.names)}')
         print(f'{len(bundle.drivers)} driver records; {len(data)} bundle bytes')
+        return 0
+    if args.command == 'setslot':
+        require(not args.bundlefile or args.inputfile is None,
+                '--inputfile requires --inputimage')
+        filename = args.inputfile or 'SOS.DRIVER'
+        old = (Path(args.bundlefile).expanduser().read_bytes() if args.bundlefile
+               else image_read(args.inputimage, filename))
+        bundle = Bundle.parse(old)
+        index = bundle.locate(args.driver)
+        driver = bundle.drivers[index]
+        changed = driver.setslot(args.slot)
+        drivers = list(bundle.drivers)
+        drivers[index] = changed
+        new = Bundle(bundle.header, tuple(drivers), bundle.trailer).pack()
+        print_digest(changed, args.hash_mode)
+        if args.bundlefile:
+            saved = replace_bundle_file(args.bundlefile, old, new,
+                                        backup=not args.no_backup, dry_run=args.dry_run)
+            target = args.bundlefile
+        else:
+            saved = replace_image_file(args.inputimage, filename, old, new,
+                                       backup=not args.no_backup, dry_run=args.dry_run)
+            target = f'{args.inputimage}:{filename}'
+        if new == old:
+            print(f'{driver.name}: slot already {args.slot}; no changes to {target}')
+        else:
+            action = 'Would set' if args.dry_run else 'Set'
+            print(f'{action} {driver.name} slot to {args.slot} '
+                  f'(devices: {", ".join(driver.names)}) in {target}')
+        if saved:
+            print(f'Backup: {saved}')
         return 0
     if args.command == 'delete':
         image, filename = args.inputimage, args.inputfile
